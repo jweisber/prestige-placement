@@ -1,0 +1,334 @@
+---
+title: "Prestige and Placement in North American Philosophy"
+author: "Jonathan Weisberg"
+output:
+  md_document:
+    variant: markdown
+css: custom.css
+---
+
+How does prestige correlate with placement in academic philosophy? There's good stuff on this already, like [this post](http://placementdata.com:8182/the-philosophical-gourmet-report-and-placement/) by Carolyn Dicey Jennings, Pablo Contreras Kallens, and Justin Vlasits.[^0] This post uses the same data sources, but emphasizes different things (visualization, North American PhDs, and primarily tenure-track jobs).
+
+[^0]: Also check out Figure 1 in [this paper](https://quod.lib.umich.edu/e/ergo/12405314.0005.010?view=text;rgn=main) by Helen De Cruz.
+
+```{r setup, include=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggrepel)
+library(hrbrthemes)
+
+my_theme <- list(
+  labs(caption ="Data sources: www.placementdata.com and www.philosophicalgourmet.com\nAuthor: Jonathan Weisberg (@jweisber)"),
+  theme_ipsum() 
+)
+
+# load data ----
+df_pgr <- read_csv("data/pgr.csv")
+positions <- read_csv("data/Position_view.csv")
+universities <- read_csv("data/University_view.csv")
+graduations <- read_csv("data/Graduation_view.csv") %>% select(-id)
+placements <- read_csv("data/Placement_view.csv", 
+                       col_types = list(university_id = col_character())) %>% select(-id)
+
+graduations <- graduations %>%
+  rename(program_graduated_id = university, year_graduated = year)
+
+# lump HPS programs
+graduations$program_graduated_id[graduations$program_graduated_id == 500] <- 499
+graduations$program_graduated_id[graduations$program_graduated_id == 557] <- 12
+graduations$program_graduated_id[graduations$program_graduated_id == 556] <- 375
+graduations$program_graduated_id[graduations$program_graduated_id == 559] <- 19
+graduations$program_graduated_id[graduations$program_graduated_id == 5413] <- 132
+placements$university_id[placements$university_id == 500] <- 499
+placements$university_id[placements$university_id == 557] <- 12
+placements$university_id[placements$university_id == 556] <- 375
+placements$university_id[placements$university_id == 559] <- 19
+placements$university_id[placements$university_id == 5413] <- 132
+
+placements <- placements %>%
+  rename(program_placed = university, year_placed = year)
+
+placements$university_id[placements$university_id == "NULL"] <- NA
+placements$university_id <- as.integer(placements$university_id)
+
+placements$year_placed[placements$year_placed == 19182] <- 1982
+placements$year_placed[placements$year_placed == 2104] <- 2014
+
+universities$name <- gsub("\\*", "", universities$name)
+universities$name[universities$name == "King´s College London"] <- "King's College London"
+universities$name[universities$name == "Texas A & M University-College Station"] <- "Texas A&M University"
+universities$name[universities$name == "University of Southampton"] <- "University of Southampton"
+universities$name[universities$name == "Unviersity of Birmingham"] <- "University of Birmingham"
+universities$name[universities$name == "University of Canterbury Christchurch"] <- "University of Canterbury"
+universities$name[universities$name == "Queen´s University"] <- "Queen's University"
+
+df_apda <- graduations %>%
+  left_join(placements, by = "person") %>%
+  left_join(universities, by =  c("program_graduated_id" = "id")) %>%
+  rename("program_graduated" = "name") %>%
+  left_join(positions, by = c("position" = "id"))
+
+df_apda$title[is.na(df_apda$title)] <- "Unknown"
+
+df_pgr_nam_2006 <- df_pgr %>% filter(year == 2006, locale %in% c("Canada", "US"))
+
+pgr_ids <- universities %>% filter(name %in% df_pgr_nam_2006$program) %>% .$id
+phd_ids <- graduations$program_graduated_id %>% unique()
+
+df <- df_apda %>% 
+  filter(year_graduated %in% seq(2012, 2014)) %>%
+  inner_join(df_pgr_nam_2006, by = c("program_graduated" = "program"))
+```
+
+
+# TT Placement in North America
+
+Let's start with a simple question of broad interest. In North America, how well does the [PGR](https://www.philosophicalgourmet.com/) rating of one's PhD-granting program predict one's chances of landing a tenure-track (TT) job?
+
+Consider all the people who got a PhD from a North American philosophy program in the years 2012--14.[^1] Focus for now on those from PhD programs ranked by the 2006 edition of the PGR.[^2] Now group them according to those PGR ratings, rounded to the nearest 0.5.
+
+[^1]: Why these years? Because that's where the data is best. The APDA has focused its collection efforts so far on graduates from the years 2012--16, so that's where the data is the most plentiful. But the data for 2015 and 2016 graduates probably aren't "ripe" enough yet for our purposes; many graduates who will ultimately find TT jobs are probably still in postdocs and other temporary gigs. Thanks to Brian Weatherson for [pushing me to take this into account](https://twitter.com/bweatherson/status/1134570972315508736).
+
+    Of course, the 2012--2014 data aren't fully ripe either. But [previous noodling](https://jonathanweisberg.org/post/prestige-and-time-to-tt/) suggests they're probably pretty close.
+
+[^2]: Why the 2006 edition? Partly for continuity with [the APDA's own analysis](http://placementdata.com:8182/the-philosophical-gourmet-report-and-placement/). But also because students often use PGR rankings to choose PhD programs, and the rankings available to them typically predate the year of their PhD by 6 or 7 years.
+
+This gives us 7 groups of PhDs (rankings range from 2.0 to 5.0). According to [the APDA's data](http://placementdata.com), the portion from each group who ended up in TT jobs are as follows:
+
+```{r echo=FALSE, dpi=300}
+df1 <- df %>%
+  group_by(person) %>%
+  mutate(postdoc = any(title == "Fellowship/Postdoc"),
+         perm = any(title %in% c("Tenure-Track", "Lecturer (Permanent)", "Instructor (Permanent)", 
+                                 "Adjunct (Permanent)", "Other (Permanent)")),
+         tt = any(title == "Tenure-Track"),
+         phd = any(title == "Tenure-Track" & university_id %in% phd_ids),
+         pgr = any(title == "Tenure-Track" & university_id %in% pgr_ids)) %>%
+  slice(1) %>%
+  ungroup() %>%
+  mutate(mean_rounded = round(mean / .5) *.5) %>%
+  group_by(mean_rounded) %>%
+  summarize(n = n(), 
+            postdoc_rate = sum(postdoc) / n,
+            perm_rate = sum(perm) / n,
+            tt_rate = sum(tt) / n,
+            phd_rate = sum(phd) / n,
+            pgr_rate = sum(pgr) / n) %>%
+  gather(key = "rate_type", value = "rate", postdoc_rate, perm_rate, tt_rate, phd_rate, pgr_rate)
+  
+ggplot(df1 %>% filter(rate_type == "tt_rate"), aes(mean_rounded, rate)) +
+  geom_line() +
+  lims(x = c(2,5), y = c(0,1)) +
+  labs(x = "PGR Rating (rounded to nearest 0.5)",
+       y = "TT Placement Rate",
+       title = "Prestige & TT Placement in North American Philosophy",
+       subtitle = "2012-14 Philosophy PhDs, grouped by the 2006 PGR Rating of their PhD-granting program") +
+  my_theme
+```
+
+There's clearly a positive connection; almost perfectly linear in fact. And the gist---*very crudely speaking*---is that a high prestige PhD about doubles your chances of landing a TT job over a low-prestige PhD: from ~30% to ~60%.
+
+Note that the data are sparse at the extremes though. Consider this raw look, where each point is a PhD graduate.
+
+```{r echo=FALSE, dpi=300}
+df2 <- df %>%
+  group_by(person) %>%
+  mutate(tt = ifelse(any(title == "Tenure-Track"), "TT Job", "No TT Job")) %>%
+  slice(1)
+
+ggplot(df2, aes(mean, tt)) +
+  geom_jitter(aes(colour = tt), height = 0.1, width = 0.1, alpha = 0.3) +
+  scale_colour_brewer(palette = "Set1") +
+  labs(x = "PGR Rating",
+       y = "",
+       title = "Prestige & TT Placement in North American Philosophy",
+       subtitle = "TT Placements by PGR Rating of PhD-granting Program (2006 PGR, 2012-14 PhDs)") +
+  my_theme +
+  theme(legend.position = "none")
+```
+
+A "violin plot" shows the same thing but easier to read: the thickness of the violins indicates the density of points at each *x*-position.
+
+```{r echo=FALSE, dpi=300}
+ggplot(df2, aes(tt, mean)) +
+  geom_violin(aes(fill = tt)) +
+  scale_fill_brewer(palette = "Set1") +
+  coord_flip() +
+  labs(x = "",
+       y = "PGR Rating",
+       title = "Prestige & TT Placement in North American Philosophy",
+       subtitle = "TT Placements by PGR Rating of PhD-granting Program (2006 PGR, 2012-14 PhDs)") +
+  my_theme +
+  theme(legend.position = "none")
+```
+
+With so few points at the ends, we shouldn't read too much into the exact placement rates there.
+
+
+# Other Placement Types
+
+What about other kinds of jobs? Let's consider five categories, defined as follows.
+
+- Postdoc: "Fellowship/Postdoc" in the APDA database.
+- Permanent: any of the following in the APDA database.
+  - "Tenure-Track"
+  - "Lecturer (Permanent)"
+  - "Instructor (Permanent)"
+  - "Adjunct (Permanent)"
+  - "Other (Permanent)"
+- Tenure-Track: "Tenure-Track" in the APDA database.
+- PhD Program: Tenure-Track at a PhD-granting program.
+- PGR Ranked: Tenure-Track at a 2006 PGR-ranked program.
+
+These are hardly perfect definitions, but they're manageable with this data while still being pretty informative.
+
+```{r echo=FALSE, dpi=300}
+ggplot(df1, aes(mean_rounded, rate)) +
+  geom_line(aes(colour = rate_type)) +
+  scale_colour_brewer(palette = "Set1", name = "Type",
+                      breaks = c("postdoc_rate", "perm_rate", "tt_rate", "phd_rate", "pgr_rate"),
+                      labels = c("Postdoc", "Permanent", "Tenure-Track", "PhD Program", "PGR Ranked")) +
+  lims(x = c(2,5), y = c(0,1)) +
+  labs(x = "PGR Rating (rounded to nearest 0.5)",
+       y = "Placement Rate",
+       title = "Prestige & Placement in North American Philosophy",
+       subtitle = "2012-14 Philosophy PhDs, grouped by the 2006 PGR Rating of their PhD-granting program") +
+  my_theme
+```
+
+Note that a graduate can appear in multiple categories (Tenure-Track is a subset of Permanent, after all).
+
+
+# Unranked Programs
+
+What about PhD programs not ranked in the 2006 PGR?[^3] The numbers may be iffier here. Some programs have only one graduate listed for example, a graduate who got a TT job. But there are only a few such programs, and more than 600 graduates otherwise. So the numbers may still be good approximations.
+
+[^3]: Thanks to [Amanda at the Philosophers' Cocoon](https://philosopherscocoon.typepad.com/blog/2019/05/phd-program-prestige-and-tt-placement.html?cid=6a014e89cbe0fd970d0240a48b2f6b200d#comment-6a014e89cbe0fd970d0240a48b2f6b200d) for prompting me to look at this.
+
+```{r echo=FALSE}
+df3 <- df_apda %>% 
+  filter(year_graduated %in% seq(2012, 2014),
+         country %in% c("U.S.", "Canada"),
+         !(program_graduated %in% df_pgr_nam_2006$program),) %>%
+  group_by(person) %>%
+  mutate(postdoc = any(title == "Fellowship/Postdoc"),
+         perm = any(title %in% c("Tenure-Track", "Lecturer (Permanent)", "Instructor (Permanent)", 
+                                 "Adjunct (Permanent)", "Other (Permanent)")),
+         tt = any(title == "Tenure-Track"),
+         phd = any(title == "Tenure-Track" & university_id %in% phd_ids),
+         pgr = any(title == "Tenure-Track" & university_id %in% pgr_ids)) %>%
+  slice(1) %>%
+  ungroup()
+
+df4 <- df3 %>%
+  summarize(postdoc_rate = round(sum(postdoc) / n(), 2),
+            perm_rate = round(sum(perm) / n(), 2),
+            tt_rate = round(sum(tt) / n(), 2),
+            phd_rate = round(sum(phd) / n(), 2),
+            pgr_rate = round(sum(pgr) / n(), 2))
+
+knitr::kable(df4, col.names = c("Postdoc", "Permanent", "TT", "PhD", "PGR"), format = "pandoc")
+```
+
+If you're curious which programs stand out among the unranked, here are the top 10 by TT placement (excluding those with 5 or fewer graduates).
+
+```{r echo=FALSE}
+df5 <- df3 %>%
+  group_by(program_graduated) %>%
+  summarize(n = n(), 
+            postdoc_rate = round(sum(postdoc) / n(), 2),
+            perm_rate = round(sum(perm) / n(), 2),
+            tt_rate = round(sum(tt) / n(), 2),
+            phd_rate = round(sum(phd) / n(), 2),
+            pgr_rate = round(sum(pgr) / n(), 2))
+
+knitr::kable(
+  df5 %>% 
+    filter(n > 5) %>% 
+    top_n(10, tt_rate) %>%
+    arrange(desc(tt_rate)),
+  col.names = c("Program", "N", "Postdoc", "Permanent", "TT", "PhD", "PGR"),
+  format = "pandoc"
+)
+```
+
+Note that the top 3 are at Christian universities, and as you might expect, a lot of their placement is driven by hires at Christian schools.
+
+Here are the 10 "largest" programs, i.e. those with the most graduates listed in the APDA database.
+
+```{r echo=FALSE}
+knitr::kable(
+  df5 %>% 
+    top_n(10, n) %>%
+    arrange(desc(n)),
+  col.names = c("Program", "N", "Postdoc", "Permanent", "TT", "PhD", "PGR"),
+  format = "pandoc"
+)
+```
+
+
+# Departmental TT Placement
+
+Looking at placement rates by department raises the question: how well does a department's PGR rating predict its TT placement rate?
+
+```{r echo=FALSE, dpi=300}
+df6 <- df %>%
+  group_by(program_graduated, person) %>%
+  mutate(tt = any(title == "Tenure-Track")) %>%
+  ungroup() %>%
+  group_by(program_graduated) %>%
+  mutate(n = n(), rate = sum(tt == TRUE) / n) %>%
+  slice(1)
+
+m <- lm(rate ~ mean, df6, weights = n)
+df6$predicted_rate <- predict(m, df6)
+
+shorten_names <- function(df, long, short) {
+  for(i in 1:length(long)) {
+    long_name <- long[i]
+    short_name <- short[i]
+    df$program_graduated[df$program_graduated == long_name] <- short_name
+  }
+  return(df)
+}
+
+df6 <- shorten_names(df6,
+        c("University of Connecticut", "University of California, Riverside", 
+          "University of Maryland, College Park", "McGill University", "Western University",
+          "University of Massachusetts Amherst", "Ohio State University", "University of California, Davis",
+          "University of Alberta", "University of British Columbia", "Syracuse University",
+          "Massachusetts Institute of Technology", "Johns Hopkins University", "University of Pittsburgh"),
+        c("Connecticut", "UC Riverside", "Maryland", "McGill", "Western", "Amherst", "Ohio",
+          "UC Davis", "Alberta", "UBC", "Syracuse", "MIT", "Johns Hopkins", "Pittsburgh"))
+
+ggplot(df6, aes(mean, rate)) +
+  geom_point(aes(size = n)) +
+  geom_abline(intercept = m$coefficients[1], slope = m$coefficients[2], colour = "blue") +
+  labs(x = "PGR Rating",
+       y = "TT Placement Rate",
+       size = "Graduates",
+       title = "Prestige & TT Placement in North American Philosophy",
+       subtitle = "Departmental TT placement rates for 2012-14 graduates vs. 2006 PGR Rating",
+       caption = "Data sources: www.placementdata.com and www.philosophicalgourmet.com\nAuthor: Jonathan Weisberg (@jweisber)") +
+  my_theme
+```
+
+There's a clear connection, but also a lot of variation. Which are the programs that especially stand out from the trend? Suppressing the sizing for visibility, we can label those programs above/below the trendline by at least 0.2.
+
+```{r echo=FALSE, dpi=300}
+ggplot(df6, aes(mean, rate)) +
+  geom_point() +
+  geom_text_repel(data = df6 %>% filter(rate <= predicted_rate - .2 | rate >= predicted_rate + .2), 
+                  aes(label = program_graduated)) +
+  geom_abline(intercept = m$coefficients[1], slope = m$coefficients[2], colour = "blue") +
+  labs(x = "PGR Rating",
+       y = "TT Placement Rate",
+       size = "Graduates",
+       title = "Prestige & TT Placement in North American Philosophy",
+       subtitle = "Departmental TT placement rates for 2012-14 graduates vs. 2006 PGR Rating",
+       caption = "Data sources: www.placementdata.com and www.philosophicalgourmet.com\nAuthor: Jonathan Weisberg (@jweisber)") +
+  my_theme
+```
+
+For complete listings of departmental placement rates, check out the APDA's infograms [here](http://www.placementdata.com/data/).
+
+# Notes
